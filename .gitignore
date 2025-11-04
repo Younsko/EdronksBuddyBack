@@ -1,0 +1,48 @@
+# Visual Studio / .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Rider
+.idea/
+
+# NuGet
+*.nupkg
+packages/
+*.snupkg
+.nuget/
+
+# Build results
+*.dll
+*.exe
+*.log
+*.pdb
+
+# ASP.NET / Entity Framework
+appsettings*.json
+appsettings.Development.json
+*.db
+*.sqlite
+*.mdf
+*.ldf
+
+# Environment variables
+.env
+.env.* 
+
+# Docker
+docker-compose.override.yml
+
+# JetBrains Rider
+.idea/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,13 @@
+# Ignore everything except the project files
+**/.git
+**/.vs
+**/bin
+**/obj
+**/*.md
+**/*.suo
+**/*.user
+**/*.userosscache
+**/*.nupkg
+**/packages
+.env
+.env.*

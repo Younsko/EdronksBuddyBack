@@ -1,0 +1,73 @@
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword123
+      MYSQL_DATABASE: budgetbuddy
+      MYSQL_USER: budgetbuddy
+      MYSQL_PASSWORD: budgetbuddy123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - budgetbuddy_network
+
+  api:
+    build: .
+    ports:
+      - "5000:80"
+    env_file:
+      - .env
+    environment:
+      # --- ASP.NET Core configuration ---
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:80
+
+      # --- Database connection ---
+      ConnectionStrings__DefaultConnection: Server=db;Port=3306;Database=budgetbuddy;Uid=budgetbuddy;Pwd=budgetbuddy123;
+
+      # --- JWT ---
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: BudgetBuddy
+      JWT_AUDIENCE: BudgetBuddy
+
+      # --- OCR ---
+      OcrSpace__ApiKey: ${OCRSPACE_API_KEY}
+      OcrSpace__Language: eng   # not sensitive
+
+      # --- Ollama (non-sensitive local config) ---
+      Ollama__BaseUrl: http://host.docker.internal:11434
+      Ollama__DefaultModel: gpt-oss:120b-cloud
+
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - budgetbuddy_network
+    volumes:
+      - ./credentials:/app/credentials
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - "8082:8080"
+    depends_on:
+      - db
+    networks:
+      - budgetbuddy_network
+
+volumes:
+  mysql_data:
+
+networks:
+  budgetbuddy_network:
+    driver: bridge
