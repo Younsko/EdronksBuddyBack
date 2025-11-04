@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using BudgetBuddy.Models;
 
+
 public class AuthService
 {
     private readonly IConfiguration _config;
@@ -86,7 +87,7 @@ public class AuthService
     {
         var tokenHandler = new JwtSecurityTokenHandler();
         var jwtSecret = _config["JWT_SECRET"];
-        
+
         if (string.IsNullOrEmpty(jwtSecret))
             return false;
 
