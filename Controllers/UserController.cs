@@ -12,26 +12,23 @@ public class UserController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly AuthService _authService;
-    private readonly ExchangeRateService _exchangeRate;
+    private readonly CurrencyService _currencyService; 
     private readonly ILogger<UserController> _logger;
 
     public UserController(
         AppDbContext db, 
         AuthService authService, 
-        ExchangeRateService exchangeRate,
+        CurrencyService currencyService, 
         ILogger<UserController> logger)
     {
         _db = db;
         _authService = authService;
-        _exchangeRate = exchangeRate;
+        _currencyService = currencyService;
         _logger = logger;
     }
 
     private int GetUserId() => int.Parse(User.FindFirst("id")?.Value ?? "0");
 
-    /// <summary>
-    /// Get current user profile with statistics
-    /// </summary>
     [HttpGet("profile")]
     [ProducesResponseType(typeof(UserProfileDto), 200)]
     [ProducesResponseType(404)]
@@ -61,125 +58,114 @@ public class UserController : ControllerBase
         });
     }
 
- /// <summary>
-/// Update user profile (name, photo ONLY) - Password removed
-/// </summary>
-[HttpPut("profile")]
-[ProducesResponseType(typeof(UserProfileDto), 200)]
-[ProducesResponseType(400)]
-[ProducesResponseType(404)]
-public async Task<ActionResult<UserProfileDto>> UpdateProfile(UserUpdateDto dto)
-{
-    if (!ModelState.IsValid)
-        return BadRequest(ModelState);
-
-    var userId = GetUserId();
-    var user = await _db.Users.FindAsync(userId);
-
-    if (user == null)
-        return NotFound(new { error = "User not found" });
-
-    try
+    [HttpPut("profile")]
+    [ProducesResponseType(typeof(UserProfileDto), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<UserProfileDto>> UpdateProfile(UserUpdateDto dto)
     {
-        bool hasChanges = false;
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
 
-        // Update name
-        if (!string.IsNullOrWhiteSpace(dto.Name))
-        {
-            user.Name = dto.Name.Trim();
-            hasChanges = true;
-            _logger.LogInformation($"User {userId} updated name");
-        }
+        var userId = GetUserId();
+        var user = await _db.Users.FindAsync(userId);
 
-        // Update profile photo URL
-        if (dto.ProfilePhotoUrl != null)
+        if (user == null)
+            return NotFound(new { error = "User not found" });
+
+        try
         {
-            // Validate URL format if not empty
-            if (!string.IsNullOrEmpty(dto.ProfilePhotoUrl) && 
-                !Uri.TryCreate(dto.ProfilePhotoUrl, UriKind.Absolute, out _))
+            bool hasChanges = false;
+
+            if (!string.IsNullOrWhiteSpace(dto.Name))
             {
-                return BadRequest(new { error = "Invalid profile photo URL" });
+                user.Name = dto.Name.Trim();
+                hasChanges = true;
+                _logger.LogInformation($"User {userId} updated name");
             }
 
-            user.ProfilePhotoUrl = dto.ProfilePhotoUrl;
-            hasChanges = true;
-            _logger.LogInformation($"User {userId} updated profile photo");
-        }
+            if (dto.ProfilePhotoUrl != null)
+            {
+                if (!string.IsNullOrEmpty(dto.ProfilePhotoUrl) && 
+                    !Uri.TryCreate(dto.ProfilePhotoUrl, UriKind.Absolute, out _))
+                {
+                    return BadRequest(new { error = "Invalid profile photo URL" });
+                }
 
-        if (hasChanges)
+                user.ProfilePhotoUrl = dto.ProfilePhotoUrl;
+                hasChanges = true;
+                _logger.LogInformation($"User {userId} updated profile photo");
+            }
+
+            if (hasChanges)
+            {
+                user.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
+
+            return Ok(new UserProfileDto
+            {
+                Id = user.Id,
+                Name = user.Name,
+                Username = user.Username,
+                Email = user.Email,
+                PreferredCurrency = user.PreferredCurrency,
+                ProfilePhotoUrl = user.ProfilePhotoUrl,
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt,
+                TotalCategories = await _db.Categories.CountAsync(c => c.UserId == userId),
+                TotalTransactions = await _db.Transactions.CountAsync(t => t.UserId == userId)
+            });
+        }
+        catch (Exception ex)
         {
+            _logger.LogError($"Profile update error for user {userId}: {ex.Message}");
+            return StatusCode(500, new { error = "An error occurred while updating profile" });
+        }
+    }
+
+    [HttpPut("settings")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = GetUserId();
+        var user = await _db.Users.FindAsync(userId);
+
+        if (user == null)
+            return NotFound(new { error = "User not found" });
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(dto.PreferredCurrency))
+            {
+                if (!_currencyService.IsValidCurrency(dto.PreferredCurrency))
+                {
+                    return BadRequest(new { 
+                        error = "Unsupported currency", 
+                        supported = CurrencyService.SupportedCurrencies 
+                    });
+                }
+                
+                user.PreferredCurrency = dto.PreferredCurrency.ToUpper();
+                _logger.LogInformation($"User {userId} updated currency to {user.PreferredCurrency}");
+            }
+
             user.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
+
+            return Ok(new { message = "Settings updated successfully", currency = user.PreferredCurrency });
         }
-
-        return Ok(new UserProfileDto
+        catch (Exception ex)
         {
-            Id = user.Id,
-            Name = user.Name,
-            Username = user.Username,
-            Email = user.Email,
-            PreferredCurrency = user.PreferredCurrency,
-            ProfilePhotoUrl = user.ProfilePhotoUrl,
-            CreatedAt = user.CreatedAt,
-            UpdatedAt = user.UpdatedAt,
-            TotalCategories = await _db.Categories.CountAsync(c => c.UserId == userId),
-            TotalTransactions = await _db.Transactions.CountAsync(t => t.UserId == userId)
-        });
-    }
-    catch (Exception ex)
-    {
-        _logger.LogError($"Profile update error for user {userId}: {ex.Message}");
-        return StatusCode(500, new { error = "An error occurred while updating profile" });
-    }
-}
-    /// <summary>
-    /// Update user settings (currency only)
-    /// </summary>
-   [HttpPut("settings")]
-[ProducesResponseType(200)]
-[ProducesResponseType(400)]
-public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
-{
-    if (!ModelState.IsValid)
-        return BadRequest(ModelState);
-
-    var userId = GetUserId();
-    var user = await _db.Users.FindAsync(userId);
-
-    if (user == null)
-        return NotFound(new { error = "User not found" });
-
-    try
-    {
-        if (!string.IsNullOrWhiteSpace(dto.PreferredCurrency))
-        {
-            var currencyService = HttpContext.RequestServices.GetRequiredService<CurrencyService>();
-            if (!currencyService.IsValidCurrency(dto.PreferredCurrency))
-            {
-                return BadRequest(new { 
-                    error = "Unsupported currency", 
-                    supported = CurrencyService.SupportedCurrencies 
-                });
-            }
-            
-            user.PreferredCurrency = dto.PreferredCurrency.ToUpper();
-            _logger.LogInformation($"User {userId} updated currency to {user.PreferredCurrency}");
+            _logger.LogError($"Settings update error for user {userId}: {ex.Message}");
+            return StatusCode(500, new { error = "An error occurred while updating settings" });
         }
-
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        return Ok(new { message = "Settings updated successfully", currency = user.PreferredCurrency });
     }
-    catch (Exception ex)
-    {
-        _logger.LogError($"Settings update error for user {userId}: {ex.Message}");
-        return StatusCode(500, new { error = "An error occurred while updating settings" });
-    }
-}
-    /// <summary>
-    /// Get comprehensive monthly statistics
-    /// </summary>
+
     [HttpGet("stats")]
     [ProducesResponseType(typeof(StatsDto), 200)]
     public async Task<ActionResult<StatsDto>> GetStats([FromQuery] int year = 0, [FromQuery] int month = 0)
@@ -210,7 +196,6 @@ public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
                 TotalTransactions = transactions.Count
             };
 
-            // By category
             foreach (var cat in user.Categories)
             {
                 var categoryTransactions = transactions.Where(t => t.CategoryId == cat.Id).ToList();
@@ -227,12 +212,11 @@ public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
                 stats.TotalBudgetThisMonth += cat.MonthlyBudget;
             }
 
-            // By currency with conversion
             var byCurrency = transactions.GroupBy(t => t.Currency);
             foreach (var group in byCurrency)
             {
                 var totalInCurrency = group.Sum(t => t.Amount);
-                var converted = await _exchangeRate.ConvertCurrency(
+                var converted = await _currencyService.ConvertAsync(
                     totalInCurrency,
                     group.Key,
                     user.PreferredCurrency
@@ -247,7 +231,6 @@ public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
                 stats.TotalSpentThisMonth += converted;
             }
 
-            // Daily spending for charts
             var dailyGroups = transactions
                 .GroupBy(t => t.TransactionDate.Date)
                 .OrderBy(g => g.Key);
@@ -273,20 +256,12 @@ public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
         }
     }
 
-/// <summary>
-/// Delete user account (with password confirmation)
-/// </summary>
-[HttpDelete("profile")]
+[HttpPut("password")]
 [ProducesResponseType(200)]
 [ProducesResponseType(400)]
 [ProducesResponseType(404)]
-public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto)
+public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDto dto)
 {
-    if (dto == null)
-    {
-        return BadRequest(new { error = "Invalid request body" });
-    }
-
     if (!ModelState.IsValid)
         return BadRequest(ModelState);
 
@@ -296,27 +271,67 @@ public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto)
     if (user == null)
         return NotFound(new { error = "User not found" });
 
-    // Verify password
-    if (!_authService.VerifyPassword(dto.Password, user.PasswordHash))
-        return BadRequest(new { error = "Invalid password" });
-
-    // Verify confirmation phrase
-    if (dto.Confirmation != "DELETE_ZONE1")
-        return BadRequest(new { error = "Invalid confirmation phrase" });
+    // Verify current password
+    if (!_authService.VerifyPassword(dto.CurrentPassword, user.PasswordHash))
+        return BadRequest(new { error = "Current password is incorrect" });
 
     try
     {
-        _db.Users.Remove(user);
+        // Update password
+        user.PasswordHash = _authService.HashPassword(dto.NewPassword);
+        user.UpdatedAt = DateTime.UtcNow;
+        
         await _db.SaveChangesAsync();
 
-        _logger.LogWarning($"User account deleted: {user.Username} (ID: {userId})");
+        _logger.LogInformation($"User {userId} changed password successfully");
 
-        return Ok(new { message = "Account deleted successfully" });
+        return Ok(new { message = "Password changed successfully" });
     }
     catch (Exception ex)
     {
-        _logger.LogError($"Account deletion error for user {userId}: {ex.Message}");
-        return StatusCode(500, new { error = "An error occurred while deleting account" });
+        _logger.LogError($"Password change error for user {userId}: {ex.Message}");
+        return StatusCode(500, new { error = "An error occurred while changing password" });
     }
 }
+    [HttpDelete("profile")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto)
+    {
+        if (dto == null)
+        {
+            return BadRequest(new { error = "Invalid request body" });
+        }
+
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = GetUserId();
+        var user = await _db.Users.FindAsync(userId);
+
+        if (user == null)
+            return NotFound(new { error = "User not found" });
+
+        if (!_authService.VerifyPassword(dto.Password, user.PasswordHash))
+            return BadRequest(new { error = "Invalid password" });
+
+        if (dto.Confirmation != "DELETE_ZONE1")
+            return BadRequest(new { error = "Invalid confirmation phrase" });
+
+        try
+        {
+            _db.Users.Remove(user);
+            await _db.SaveChangesAsync();
+
+            _logger.LogWarning($"User account deleted: {user.Username} (ID: {userId})");
+
+            return Ok(new { message = "Account deleted successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Account deletion error for user {userId}: {ex.Message}");
+            return StatusCode(500, new { error = "An error occurred while deleting account" });
+        }
+    }
 }

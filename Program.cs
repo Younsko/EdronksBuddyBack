@@ -118,7 +118,20 @@ else
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
+    
+    try
+    {
+        db.Database.EnsureCreated();
+        
+        if (!db.Users.Any())
+        {
+            Console.WriteLine("✅ Database created successfully with all tables");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Database creation failed: {ex.Message}");
+    }
 }
 
 if (app.Environment.IsDevelopment())

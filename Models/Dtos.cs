@@ -214,7 +214,7 @@ public class UserProfileDto
 }
 
 // --- Password / Delete ---
-public class PasswordChangeDto
+public class ChangePasswordDto
 {
     [Required]
     public string CurrentPassword { get; set; } = string.Empty;
