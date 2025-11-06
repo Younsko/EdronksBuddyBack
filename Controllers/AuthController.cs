@@ -66,7 +66,7 @@ public class AuthController : ControllerBase
                 Username = dto.Username,
                 Email = dto.Email,
                 PasswordHash = _authService.HashPassword(dto.Password),
-                PreferredCurrency = "USD",
+                PreferredCurrency = "PHP",
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };

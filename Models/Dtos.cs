@@ -239,3 +239,38 @@ public class UserSettingsDto
     [RegularExpression(@"^[A-Z]{3}$", ErrorMessage = "Currency must be 3-letter code (e.g. USD, EUR)")]
     public string? PreferredCurrency { get; set; }
 }
+public class MonthlyBudgetDto
+{
+    public int CategoryId { get; set; }
+    public string CategoryName { get; set; } = string.Empty;
+    public string CategoryColor { get; set; } = string.Empty;
+    public decimal BudgetAmount { get; set; }
+    public string Currency { get; set; } = string.Empty;
+    public int Year { get; set; }
+    public int Month { get; set; }
+    public decimal SpentThisMonth { get; set; }
+    public decimal RemainingBudget => BudgetAmount - SpentThisMonth;
+}
+
+public class UpdateMonthlyBudgetDto
+{
+    [Required]
+    [Range(0, 1000000)]
+    public decimal BudgetAmount { get; set; }
+}
+
+public class InitMonthlyBudgetsDto
+{
+    public int Year { get; set; }
+    public int Month { get; set; }
+}
+
+public class CurrencyConversionDto
+{
+    public decimal Amount { get; set; }
+    public string FromCurrency { get; set; } = string.Empty;
+    public string ToCurrency { get; set; } = string.Empty;
+    public decimal ConvertedAmount { get; set; }
+    public decimal Rate { get; set; }
+    public DateTime RateDate { get; set; }
+}

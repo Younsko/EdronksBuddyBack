@@ -183,14 +183,12 @@ public async Task<ActionResult<TransactionDto>> CreateTransaction(TransactionCre
         {
             receiptImageUrl = dto.ReceiptImage;
 
-            // --- OCR extraction ---
             var receiptProcessingService = HttpContext.RequestServices.GetRequiredService<ReceiptProcessingService>();
             var ocrResult = await receiptProcessingService.ProcessReceiptAsync(dto.ReceiptImage, userId);
             ocrAmount = ocrResult.Amount;
             ocrCurrency = ocrResult.Currency;
             ocrDescription = ocrResult.Description;
 
-            // --- Auto-assign CategoryId based on OCR CategoryName ---
             if (!string.IsNullOrEmpty(ocrResult.CategoryName))
             {
                 var category = await _db.Categories
@@ -204,17 +202,44 @@ public async Task<ActionResult<TransactionDto>> CreateTransaction(TransactionCre
             }
         }
 
+        // ✅ Déterminer les valeurs finales
+        var finalAmount = dto.Amount != 0 ? dto.Amount : ocrAmount ?? 0;
+        var finalCurrency = !string.IsNullOrEmpty(dto.Currency) ? dto.Currency.ToUpper() : ocrCurrency ?? "PHP";
+        var finalDescription = !string.IsNullOrEmpty(dto.Description) ? dto.Description : ocrDescription ?? "Purchase receipt";
+
+        // ✅ NOUVEAU : Valider la devise
+        var currencyService = HttpContext.RequestServices.GetRequiredService<CurrencyService>();
+        if (!currencyService.IsValidCurrency(finalCurrency))
+        {
+            return BadRequest(new { error = $"Unsupported currency: {finalCurrency}. Supported: PHP, EUR, USD, GBP, CAD, CHF, JPY, AUD" });
+        }
+
         var transaction = new Transaction
         {
             UserId = userId,
             CategoryId = ocrCategoryId,
-            Amount = dto.Amount != 0 ? dto.Amount : ocrAmount ?? 0,
-            Currency = !string.IsNullOrEmpty(dto.Currency) ? dto.Currency.ToUpper() : ocrCurrency ?? "EUR",
-            Description = !string.IsNullOrEmpty(dto.Description) ? dto.Description : ocrDescription ?? "Purchase receipt",
+            
+            // ✅ NOUVEAU : Montants avec conversion
+            OriginalAmount = finalAmount,
+            OriginalCurrency = finalCurrency,
+            AmountPHP = 0, // Sera calculé juste après
+            
+            // Compatibilité (déprécié)
+            Amount = finalAmount,
+            Currency = finalCurrency,
+            
+            Description = finalDescription,
             ReceiptImageUrl = receiptImageUrl,
             TransactionDate = transactionDate,
             CreatedAt = DateTime.UtcNow
         };
+
+        // ✅ NOUVEAU : Convertir en PHP
+        transaction.AmountPHP = await currencyService.ConvertAsync(
+            transaction.OriginalAmount, 
+            transaction.OriginalCurrency, 
+            "PHP"
+        );
 
         _db.Transactions.Add(transaction);
         await _db.SaveChangesAsync();
@@ -242,69 +267,79 @@ public async Task<ActionResult<TransactionDto>> CreateTransaction(TransactionCre
 }
 
     // --- UPDATE transaction ---
-    [HttpPut("{id}")]
-    [ProducesResponseType(typeof(TransactionDto), 200)]
-    [ProducesResponseType(403)]
-    [ProducesResponseType(404)]
-    public async Task<ActionResult<TransactionDto>> UpdateTransaction(int id, TransactionCreateDto dto)
+ [HttpPut("{id}")]
+[ProducesResponseType(typeof(TransactionDto), 200)]
+[ProducesResponseType(403)]
+[ProducesResponseType(404)]
+public async Task<ActionResult<TransactionDto>> UpdateTransaction(int id, TransactionCreateDto dto)
+{
+    if (!ModelState.IsValid)
+        return BadRequest(ModelState);
+
+    var userId = GetUserId();
+    var transaction = await _db.Transactions
+        .Include(t => t.Category)
+        .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+
+    if (transaction == null)
+        return NotFound(new { error = "Transaction not found or access denied" });
+
+    try
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = GetUserId();
-        var transaction = await _db.Transactions
-            .Include(t => t.Category)
-            .FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
-
-        if (transaction == null)
-            return NotFound(new { error = "Transaction not found or access denied" });
-
-        try
+        if (dto.CategoryId.HasValue && dto.CategoryId.Value > 0)
         {
-            if (dto.CategoryId.HasValue && dto.CategoryId.Value > 0)
-            {
-                if (!await _categoryService.UserOwnsCategoryAsync(userId, dto.CategoryId.Value))
-                    return BadRequest(new { error = "Category not found or access denied" });
-            }
-
-            transaction.CategoryId = dto.CategoryId.HasValue && dto.CategoryId.Value > 0 ? dto.CategoryId.Value : null;
-            transaction.Amount = dto.Amount;
-            transaction.Currency = dto.Currency.ToUpper();
-            transaction.Description = dto.Description;
-
-            if (string.IsNullOrEmpty(dto.Date))
-                return BadRequest(new { error = "Date is required" });
-
-            if (!DateTime.TryParseExact(dto.Date, "dd-MM-yyyy", null, System.Globalization.DateTimeStyles.None, out var parsedDate))
-                return BadRequest(new { error = "Invalid date format. Use DD-MM-YYYY" });
-
-            transaction.TransactionDate = parsedDate;
-
-            if (!string.IsNullOrEmpty(dto.ReceiptImage))
-                transaction.ReceiptImageUrl = dto.ReceiptImage;
-
-            await _db.SaveChangesAsync();
-
-            return Ok(new TransactionDto
-            {
-                Id = transaction.Id,
-                CategoryId = transaction.CategoryId,
-                CategoryName = transaction.Category?.Name,
-                CategoryColor = transaction.Category?.Color,
-                Amount = transaction.Amount,
-                Currency = transaction.Currency,
-                Description = transaction.Description,
-                ReceiptImageUrl = transaction.ReceiptImageUrl,
-                TransactionDate = transaction.TransactionDate.ToString("dd-MM-yyyy"),
-                CreatedAt = transaction.CreatedAt
-            });
+            if (!await _categoryService.UserOwnsCategoryAsync(userId, dto.CategoryId.Value))
+                return BadRequest(new { error = "Category not found or access denied" });
         }
-        catch (Exception ex)
+
+        var currencyService = HttpContext.RequestServices.GetRequiredService<CurrencyService>();
+        if (!currencyService.IsValidCurrency(dto.Currency))
         {
-            _logger.LogError($"Update transaction error: {ex.Message}");
-            return StatusCode(500, new { error = "An error occurred while updating transaction" });
+            return BadRequest(new { error = $"Unsupported currency: {dto.Currency}" });
         }
+
+        transaction.CategoryId = dto.CategoryId.HasValue && dto.CategoryId.Value > 0 ? dto.CategoryId.Value : null;
+        
+        transaction.OriginalAmount = dto.Amount;
+        transaction.OriginalCurrency = dto.Currency.ToUpper();
+        transaction.AmountPHP = await currencyService.ConvertAsync(dto.Amount, dto.Currency.ToUpper(), "PHP");
+        transaction.Amount = dto.Amount;
+        transaction.Currency = dto.Currency.ToUpper();
+        transaction.Description = dto.Description;
+
+        if (string.IsNullOrEmpty(dto.Date))
+            return BadRequest(new { error = "Date is required" });
+
+        if (!DateTime.TryParseExact(dto.Date, "dd-MM-yyyy", null, System.Globalization.DateTimeStyles.None, out var parsedDate))
+            return BadRequest(new { error = "Invalid date format. Use DD-MM-YYYY" });
+
+        transaction.TransactionDate = parsedDate;
+
+        if (!string.IsNullOrEmpty(dto.ReceiptImage))
+            transaction.ReceiptImageUrl = dto.ReceiptImage;
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new TransactionDto
+        {
+            Id = transaction.Id,
+            CategoryId = transaction.CategoryId,
+            CategoryName = transaction.Category?.Name,
+            CategoryColor = transaction.Category?.Color,
+            Amount = transaction.Amount,
+            Currency = transaction.Currency,
+            Description = transaction.Description,
+            ReceiptImageUrl = transaction.ReceiptImageUrl,
+            TransactionDate = transaction.TransactionDate.ToString("dd-MM-yyyy"),
+            CreatedAt = transaction.CreatedAt
+        });
     }
+    catch (Exception ex)
+    {
+        _logger.LogError($"Update transaction error: {ex.Message}");
+        return StatusCode(500, new { error = "An error occurred while updating transaction" });
+    }
+}
 
     // --- DELETE transaction ---
     [HttpDelete("{id}")]

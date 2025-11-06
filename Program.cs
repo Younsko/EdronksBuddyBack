@@ -60,14 +60,17 @@ builder.Services.AddCors(opt => opt.AddPolicy("AllowAll",
 
 // Services
 builder.Services.AddScoped<AuthService>();
-builder.Services.AddScoped<ExchangeRateService>();
-builder.Services.AddScoped<OcrService>(); // OCR service
+builder.Services.AddScoped<OcrService>(); 
 builder.Services.AddScoped<CategoryService>();
 builder.Services.AddScoped<OllamaService>();
 builder.Services.AddScoped<ReceiptProcessingService>();
-builder.Services.AddHttpClient(); // Required for OcrService
+builder.Services.AddScoped<CurrencyService>();
+builder.Services.AddScoped<MonthlyBudgetService>();
+builder.Services.AddHttpClient(); 
 
-// Configuration des services externes
+
+
+// External services
 builder.Services.Configure<OllamaSettings>(builder.Configuration.GetSection("Ollama"));
 builder.Services.Configure<OcrSpaceSettings>(builder.Configuration.GetSection("OcrSpace"));
 

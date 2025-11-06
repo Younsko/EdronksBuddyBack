@@ -1,8 +1,14 @@
-# Ignore everything except the project files
+# Ignore only build outputs, Git and VS stuff
 **/.git
 **/.vs
 **/bin
 **/obj
+
+# Keep all C# source files
+!**/*.cs
+!**/*.csproj
+
+# Ignore everything else
 **/*.md
 **/*.suo
 **/*.user

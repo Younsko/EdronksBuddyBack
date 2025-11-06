@@ -135,40 +135,48 @@ public async Task<ActionResult<UserProfileDto>> UpdateProfile(UserUpdateDto dto)
     /// <summary>
     /// Update user settings (currency only)
     /// </summary>
-    [HttpPut("settings")]
-    [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
+   [HttpPut("settings")]
+[ProducesResponseType(200)]
+[ProducesResponseType(400)]
+public async Task<ActionResult> UpdateSettings([FromBody] UserSettingsDto dto)
+{
+    if (!ModelState.IsValid)
+        return BadRequest(ModelState);
+
+    var userId = GetUserId();
+    var user = await _db.Users.FindAsync(userId);
+
+    if (user == null)
+        return NotFound(new { error = "User not found" });
+
+    try
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = GetUserId();
-        var user = await _db.Users.FindAsync(userId);
-
-        if (user == null)
-            return NotFound(new { error = "User not found" });
-
-        try
+        if (!string.IsNullOrWhiteSpace(dto.PreferredCurrency))
         {
-            if (!string.IsNullOrWhiteSpace(dto.PreferredCurrency))
+            var currencyService = HttpContext.RequestServices.GetRequiredService<CurrencyService>();
+            if (!currencyService.IsValidCurrency(dto.PreferredCurrency))
             {
-                user.PreferredCurrency = dto.PreferredCurrency.ToUpper();
-                _logger.LogInformation($"User {userId} updated currency to {user.PreferredCurrency}");
+                return BadRequest(new { 
+                    error = "Unsupported currency", 
+                    supported = CurrencyService.SupportedCurrencies 
+                });
             }
-
-            user.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
-
-            return Ok(new { message = "Settings updated successfully", currency = user.PreferredCurrency });
+            
+            user.PreferredCurrency = dto.PreferredCurrency.ToUpper();
+            _logger.LogInformation($"User {userId} updated currency to {user.PreferredCurrency}");
         }
-        catch (Exception ex)
-        {
-            _logger.LogError($"Settings update error for user {userId}: {ex.Message}");
-            return StatusCode(500, new { error = "An error occurred while updating settings" });
-        }
+
+        user.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return Ok(new { message = "Settings updated successfully", currency = user.PreferredCurrency });
     }
-
+    catch (Exception ex)
+    {
+        _logger.LogError($"Settings update error for user {userId}: {ex.Message}");
+        return StatusCode(500, new { error = "An error occurred while updating settings" });
+    }
+}
     /// <summary>
     /// Get comprehensive monthly statistics
     /// </summary>
