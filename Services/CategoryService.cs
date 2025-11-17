@@ -13,9 +13,6 @@ public class CategoryService
         _logger = logger;
     }
 
-    /// <summary>
-    /// Categories created by default with no budget
-    /// </summary>
     private static readonly List<(string Name, string Color)> DefaultCategories = new()
     {
         ("Food & Dining", "#FF6B6B"),
@@ -32,9 +29,6 @@ public class CategoryService
         ("Miscellaneous", "#636E72")
     };
 
-    /// <summary>
-    /// Initialize default categories for new user
-    /// </summary>
     public async Task InitializeDefaultCategoriesAsync(int userId)
     {
         _logger.LogInformation($"Initializing default categories for user {userId}");
@@ -54,33 +48,25 @@ public class CategoryService
         _logger.LogInformation($"Created {categories.Count} default categories for user {userId}");
     }
 
-    /// <summary>
-    /// Get all categories with spending info for user
-    /// </summary>
     public async Task<List<CategoryDto>> GetCategoriesWithSpendingAsync(int userId, int? year = null, int? month = null)
     {
         var now = DateTime.UtcNow;
         var targetYear = year ?? now.Year;
         var targetMonth = month ?? now.Month;
 
-        var categories = await _db.Categories
-            .Where(c => c.UserId == userId)
-            .ToListAsync();
+        var categories = await _db.Categories.Include(c => c.MonthlyBudgets)
+            .Where(c => c.UserId == userId).ToListAsync();
 
         var result = new List<CategoryDto>();
 
         foreach (var cat in categories)
         {
             var spent = await _db.Transactions
-                .Where(t => t.CategoryId == cat.Id
-                    && t.TransactionDate.Year == targetYear
-                    && t.TransactionDate.Month == targetMonth)
+                .Where(t => t.CategoryId == cat.Id && t.TransactionDate.Year == targetYear && t.TransactionDate.Month == targetMonth)
                 .SumAsync(t => t.Amount);
 
             var transactionCount = await _db.Transactions
-                .Where(t => t.CategoryId == cat.Id
-                    && t.TransactionDate.Year == targetYear
-                    && t.TransactionDate.Month == targetMonth)
+                .Where(t => t.CategoryId == cat.Id && t.TransactionDate.Year == targetYear && t.TransactionDate.Month == targetMonth)
                 .CountAsync();
 
             result.Add(new CategoryDto
@@ -97,9 +83,6 @@ public class CategoryService
         return result.OrderBy(c => c.Name).ToList();
     }
 
-    /// <summary>
-    /// Check if user owns category
-    /// </summary>
     public async Task<bool> UserOwnsCategoryAsync(int userId, int categoryId)
     {
         return await _db.Categories.AnyAsync(c => c.Id == categoryId && c.UserId == userId);

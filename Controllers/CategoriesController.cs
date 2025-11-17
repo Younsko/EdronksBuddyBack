@@ -26,20 +26,13 @@ public class CategoriesController : ControllerBase
 
     private int GetUserId() => int.Parse(User.FindFirst("id")?.Value ?? "0");
 
-    /// <summary>
-    /// List all categories for current user with spending info
-    /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(List<CategoryDto>), 200)]
-    public async Task<ActionResult<List<CategoryDto>>> GetCategories(
-        [FromQuery] int? year = null, 
-        [FromQuery] int? month = null)
+    public async Task<ActionResult<List<CategoryDto>>> GetCategories([FromQuery] int? year = null, [FromQuery] int? month = null)
     {
         try
         {
-            var categories = await _categoryService.GetCategoriesWithSpendingAsync(
-                GetUserId(), year, month);
-
+            var categories = await _categoryService.GetCategoriesWithSpendingAsync(GetUserId(), year, month);
             return Ok(categories);
         }
         catch (Exception ex)
@@ -49,9 +42,6 @@ public class CategoriesController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get a single category by ID
-    /// </summary>
     [HttpGet("{id}")]
     [ProducesResponseType(typeof(CategoryDto), 200)]
     [ProducesResponseType(403)]
@@ -60,25 +50,20 @@ public class CategoriesController : ControllerBase
     {
         var userId = GetUserId();
 
-        // ✅ Security: Verify ownership
         if (!await _categoryService.UserOwnsCategoryAsync(userId, id))
             return Forbid();
 
-        var category = await _db.Categories.FindAsync(id);
+        var category = await _db.Categories.Include(c => c.MonthlyBudgets).FirstOrDefaultAsync(c => c.Id == id);
         if (category == null)
             return NotFound(new { error = "Category not found" });
 
         var now = DateTime.UtcNow;
         var spent = await _db.Transactions
-            .Where(t => t.CategoryId == id
-                && t.TransactionDate.Year == now.Year
-                && t.TransactionDate.Month == now.Month)
+            .Where(t => t.CategoryId == id && t.TransactionDate.Year == now.Year && t.TransactionDate.Month == now.Month)
             .SumAsync(t => t.Amount);
 
         var transactionCount = await _db.Transactions
-            .Where(t => t.CategoryId == id
-                && t.TransactionDate.Year == now.Year
-                && t.TransactionDate.Month == now.Month)
+            .Where(t => t.CategoryId == id && t.TransactionDate.Year == now.Year && t.TransactionDate.Month == now.Month)
             .CountAsync();
 
         return Ok(new CategoryDto
@@ -92,9 +77,6 @@ public class CategoriesController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Create a new category
-    /// </summary>
     [HttpPost]
     [ProducesResponseType(typeof(CategoryDto), 201)]
     [ProducesResponseType(400)]
@@ -107,7 +89,6 @@ public class CategoriesController : ControllerBase
 
         try
         {
-            // Check for duplicate name
             if (await _db.Categories.AnyAsync(c => c.UserId == userId && c.Name == dto.Name))
                 return BadRequest(new { error = "A category with this name already exists" });
 
@@ -122,8 +103,6 @@ public class CategoriesController : ControllerBase
 
             _db.Categories.Add(category);
             await _db.SaveChangesAsync();
-
-            _logger.LogInformation($"Category created: {category.Name} (ID: {category.Id}) by user {userId}");
 
             return CreatedAtAction(nameof(GetCategory), new { id = category.Id }, new CategoryDto
             {
@@ -142,9 +121,6 @@ public class CategoriesController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Update a category
-    /// </summary>
     [HttpPut("{id}")]
     [ProducesResponseType(typeof(CategoryDto), 200)]
     [ProducesResponseType(403)]
@@ -156,8 +132,7 @@ public class CategoriesController : ControllerBase
 
         var userId = GetUserId();
 
-        // ✅ Security: Verify ownership
-        var category = await _db.Categories
+        var category = await _db.Categories.Include(c => c.MonthlyBudgets)
             .FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
 
         if (category == null)
@@ -165,24 +140,41 @@ public class CategoriesController : ControllerBase
 
         try
         {
-            // Check for duplicate name (excluding current category)
-            if (await _db.Categories.AnyAsync(c => 
-                c.UserId == userId && c.Name == dto.Name && c.Id != id))
+            if (await _db.Categories.AnyAsync(c => c.UserId == userId && c.Name == dto.Name && c.Id != id))
                 return BadRequest(new { error = "A category with this name already exists" });
 
             category.Name = dto.Name;
             category.Color = dto.Color;
             category.MonthlyBudget = dto.MonthlyBudget;
 
+            // Update or create the monthly budget automatically
+            var now = DateTime.UtcNow;
+            var year = now.Year;
+            var month = now.Month;
+
+            var monthlyBudget = category.MonthlyBudgets.FirstOrDefault(b => b.Year == year && b.Month == month);
+            if (monthlyBudget == null)
+            {
+                monthlyBudget = new CategoryMonthlyBudget
+                {
+                    CategoryId = category.Id,
+                    UserId = userId,
+                    Year = year,
+                    Month = month,
+                    BudgetAmount = category.MonthlyBudget,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _db.CategoryMonthlyBudgets.Add(monthlyBudget);
+            }
+            else
+            {
+                monthlyBudget.BudgetAmount = category.MonthlyBudget;
+            }
+
             await _db.SaveChangesAsync();
 
-            _logger.LogInformation($"Category updated: {category.Name} (ID: {id}) by user {userId}");
-
-            var now = DateTime.UtcNow;
             var spent = await _db.Transactions
-                .Where(t => t.CategoryId == id
-                    && t.TransactionDate.Year == now.Year
-                    && t.TransactionDate.Month == now.Month)
+                .Where(t => t.CategoryId == id && t.TransactionDate.Year == year && t.TransactionDate.Month == month)
                 .SumAsync(t => t.Amount);
 
             return Ok(new CategoryDto
@@ -201,9 +193,6 @@ public class CategoriesController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Delete a category
-    /// </summary>
     [HttpDelete("{id}")]
     [ProducesResponseType(200)]
     [ProducesResponseType(403)]
@@ -212,10 +201,7 @@ public class CategoriesController : ControllerBase
     {
         var userId = GetUserId();
 
-        // ✅ Security: Verify ownership
-        var category = await _db.Categories
-            .FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
-
+        var category = await _db.Categories.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
         if (category == null)
             return NotFound(new { error = "Category not found or access denied" });
 
@@ -223,8 +209,6 @@ public class CategoriesController : ControllerBase
         {
             _db.Categories.Remove(category);
             await _db.SaveChangesAsync();
-
-            _logger.LogInformation($"Category deleted: {category.Name} (ID: {id}) by user {userId}");
 
             return Ok(new { message = "Category deleted successfully" });
         }

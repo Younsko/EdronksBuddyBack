@@ -8,6 +8,7 @@ public class Category
     public string Color { get; set; } = "#000000";
     public decimal MonthlyBudget { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public List<CategoryMonthlyBudget> MonthlyBudgets { get; set; } = new();
 
     public User User { get; set; } = null!;
     public List<Transaction> Transactions { get; set; } = new();
